@@ -1,6 +1,6 @@
 Huom: UI tukee suomea ja englantia (fi/en).
 
-# Invoice App (Streamlit MVP)
+# Invoice App (Lite UI + API + Pro UI)
 
 ## Overview
 Local-first Streamlit app for creating simple receipts/invoices for small businesses. It generates PDFs, logs events in an append-only ledger, and keeps data in a monthly storage structure without any cloud requirement.
@@ -15,12 +15,28 @@ Local-first Streamlit app for creating simple receipts/invoices for small busine
 - Optional ZIP backups with retention
 - Local-only operation (no external services required)
 
+## Modes
+- Lite: Streamlit UI for local operation
+- API: FastAPI wrapper around core service
+- Pro: Next.js dashboard and invoice creation UI
+
 ## Project Structure
 ```
 invoice-app/
   app.py
   config.py
+  core/
+    invoice_service.py
+    models.py
   requirements.txt
+  server/
+    main.py
+    schemas.py
+    security.py
+    settings.py
+  frontend/
+    README.md
+    src/app/
   run.bat
   README.md
   locales/
@@ -28,6 +44,7 @@ invoice-app/
     en.json
   outputs/
     pdf.py
+    finvoice.py
   storage/
     archive_manager.py
     backup_manager.py
@@ -37,6 +54,7 @@ invoice-app/
     atomic.py
     i18n.py
     sanitization.py
+    money.py
 ```
 
 ## Quick Start (Windows PowerShell)
@@ -45,16 +63,16 @@ invoice-app/
 ```powershell
 cd C:\Projektit\invoice-app
 python -m venv .venv
-.\.venv\Scripts\activate
+.\\.venv\\Scripts\\Activate.ps1
 pip install -r requirements.txt
-streamlit run app.py --server.port 8501
+python -m streamlit run app.py --server.port 8501
 ```
 Runs on http://127.0.0.1:8501
 
 ### 2) API (FastAPI)
 ```powershell
 cd C:\Projektit\invoice-app
-.\.venv\Scripts\activate
+.\\.venv\\Scripts\\Activate.ps1
 python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 ```
 Test: http://127.0.0.1:8000/api/v1/health  
@@ -80,11 +98,9 @@ Key environment variables:
 - `COMPANY_ADDRESS`, `COMPANY_EMAIL`, `COMPANY_PHONE`, `COMPANY_WEB`
 
 ## Data & Storage
-- `data/sequence.txt`: receipt number sequence
-- `data/ledger.xlsx`: Excel log of receipts
-- `storage/YYYY/MM/`: monthly archive
-  - `receipts/` for PDFs
-  - `meta/ledger_YYYY-MM.jsonl` append-only integrity ledger
+- `data/`: sequence counter and Excel ledger
+- `storage/YYYY/MM/`: monthly archive for receipts, exports, and metadata
+- `storage/**/meta/ledger_YYYY-MM.jsonl`: append-only integrity ledger
 - `backups/`: ZIP backups of monthly folders
 
 ## Security Notes
