@@ -48,6 +48,12 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+## API Server (FastAPI)
+Start the local API wrapper around the core service:
+```powershell
+uvicorn server.main:app --host 127.0.0.1 --port 8000
+```
+
 ## Configuration (.env)
 Key environment variables:
 - `TIMEZONE` (default: `Europe/Helsinki`)
