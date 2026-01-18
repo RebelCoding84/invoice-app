@@ -63,7 +63,7 @@ invoice-app/
 ```powershell
 cd C:\Projektit\invoice-app
 python -m venv .venv
-.\\.venv\\Scripts\\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python -m streamlit run app.py --server.port 8501
 ```
@@ -72,7 +72,7 @@ Runs on http://127.0.0.1:8501
 ### 2) API (FastAPI)
 ```powershell
 cd C:\Projektit\invoice-app
-.\\.venv\\Scripts\\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 ```
 Test: http://127.0.0.1:8000/api/v1/health  
