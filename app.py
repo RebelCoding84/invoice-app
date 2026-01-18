@@ -2,35 +2,18 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import streamlit as st
 
-from config import (
-    BACKUP_ENABLED,
-    COMPANY_ADDRESS,
-    COMPANY_EMAIL,
-    COMPANY_ID,
-    COMPANY_NAME,
-    COMPANY_PHONE,
-    COMPANY_VAT,
-    COMPANY_WEB,
-    DATA_DIR,
-    DEFAULT_LOCALE,
-    DEFAULT_PROVIDER,
-    LOG_DIR,
-    TIMEZONE,
-)
-from outputs.finvoice import generate_finvoice_xml
-from outputs.pdf import render_receipt_pdf
-from storage import catalog, excel, ledger
-from storage.archive_manager import move_receipt_to_month
-from storage.backup_manager import create_backup_zip
-from utils.atomic import atomic_write_text
+from config import BACKUP_ENABLED, DATA_DIR, DEFAULT_LOCALE, DEFAULT_PROVIDER, LOG_DIR, TIMEZONE
+from core.invoice_service import create_invoice
+from core.models import Customer, InvoiceDraft, InvoiceLine, InvoiceOptions
+from storage import catalog
 from utils.i18n import load_locale, t
-from utils.money import calculate_totals
+from utils.money import compute_totals
 
 
 def _setup_logging() -> logging.Logger:
@@ -52,19 +35,6 @@ def _get_now() -> datetime:
     except Exception:
         tz = ZoneInfo("UTC")
     return datetime.now(tz=tz)
-
-
-def _next_receipt_no(seq_path: Path) -> int:
-    seq_path.parent.mkdir(parents=True, exist_ok=True)
-    current = 0
-    if seq_path.exists():
-        try:
-            current = int(seq_path.read_text(encoding="utf-8").strip() or 0)
-        except ValueError:
-            current = 0
-    new_value = current + 1
-    atomic_write_text(str(seq_path), f"{new_value}\n", encoding="utf-8")
-    return new_value
 
 
 st.set_page_config(page_title="Rebel Invoice", layout="wide")
@@ -170,10 +140,10 @@ with st.form("receipt_form"):
 qty_dec = Decimal(str(qty))
 unit_price_dec = Decimal(str(unit_price))
 vat_pct_dec = Decimal(str(vat_pct))
-totals = calculate_totals(qty_dec, unit_price_dec, vat_pct_dec)
-subtotal = totals["subtotal"]
+totals = compute_totals(qty_dec, unit_price_dec, vat_pct_dec)
+subtotal = totals["subtotal_ex_vat"]
 vat_amount = totals["vat_amount"]
-total = totals["total"]
+total = totals["total_inc_vat"]
 
 st.subheader(t("preview", lang))
 st.write(f"Subtotal: {subtotal:.2f} EUR")
@@ -182,121 +152,46 @@ st.write(f"Total: {total:.2f} EUR")
 
 if submitted:
     now = _get_now()
-    receipt_no = _next_receipt_no(DATA_DIR / "sequence.txt")
-    created_at = now.isoformat()
+    due_date = now + timedelta(days=14)
 
-    payload = {
-        "receipt_no": receipt_no,
-        "date": created_at,
-        "customer_name": customer,
-        "reference": note,
-        "subtotal": str(subtotal),
-        "vat_amount": str(vat_amount),
-        "vat_pct": str(totals["vat_percent"]),
-        "total": str(total),
-        "currency": "EUR",
-        "qty": str(qty_dec),
-        "unit_price": str(unit_price_dec),
-        "items": [
-            {
-                "name": item_name,
-                "qty": str(qty_dec),
-                "unit_price": str(unit_price_dec),
-            }
-        ],
-    }
-    company = {
-        "name": COMPANY_NAME,
-        "address": COMPANY_ADDRESS,
-        "id": COMPANY_ID,
-        "vat": COMPANY_VAT,
-        "email": COMPANY_EMAIL,
-        "phone": COMPANY_PHONE,
-        "web": COMPANY_WEB,
-    }
+    draft = InvoiceDraft(
+        customer=Customer(name=customer, email="", address="", vat_id=""),
+        line=InvoiceLine(
+            description=item_name,
+            quantity=qty_dec,
+            unit_price=unit_price_dec,
+            vat_percent=vat_pct_dec,
+        ),
+        payment_method=pay_method,
+        notes=note,
+        currency="EUR",
+        issue_date=now,
+        due_date=due_date,
+    )
+    options = InvoiceOptions(
+        generate_finvoice=generate_finvoice,
+        enable_backup=BACKUP_ENABLED,
+    )
 
     try:
-        tmp_dir = Path("outputs")
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        temp_pdf_path = tmp_dir / f"receipt_{receipt_no:06d}_tmp.pdf"
-        render_receipt_pdf(str(temp_pdf_path), payload, company)
-        final_pdf_path = move_receipt_to_month(str(temp_pdf_path), now, receipt_no)
-        finvoice_path = None
-        finvoice_sha256 = None
-        if generate_finvoice:
-            exports_dir = (
-                Path("storage") / f"{now.year:04d}" / f"{now.month:02d}" / "exports"
-            )
-            exports_dir.mkdir(parents=True, exist_ok=True)
-            finvoice_path = exports_dir / f"finvoice_{receipt_no:06d}.xml"
-            generate_finvoice_xml(str(finvoice_path), payload, company)
-            finvoice_sha256 = ledger.compute_sha256(str(finvoice_path))
-            st.success("Finvoice XML generated")
-        excel_row = excel.save_row_to_excel(
-            str(DATA_DIR / "ledger.xlsx"),
-            {
-                "receipt_no": receipt_no,
-                "created_at": created_at,
-                "customer": customer,
-                "item": item_name,
-                "qty": float(qty_dec),
-                "unit_price": float(unit_price_dec),
-                "vat_pct": float(totals["vat_percent"]),
-                "subtotal": float(subtotal),
-                "vat": float(vat_amount),
-                "total": float(total),
-                "pay_method": pay_method,
-                "note": note,
-                "provider": provider,
-                "pdf_path": final_pdf_path,
-            },
-        )
-        pdf_sha256 = ledger.compute_sha256(final_pdf_path)
-        ledger.append_event(
-            now,
-            {
-                "event_type": "SUCCESS",
-                "receipt_no": receipt_no,
-                "pdf_path": final_pdf_path,
-                "pdf_sha256": pdf_sha256,
-                "excel_row": excel_row,
-                "created_at": created_at,
-                "finvoice_path": str(finvoice_path) if finvoice_path else None,
-                "finvoice_sha256": finvoice_sha256,
-            },
-        )
-        if BACKUP_ENABLED:
-            create_backup_zip(now)
-
+        result = create_invoice(draft, options)
         st.success(t("saved", lang))
-        with open(final_pdf_path, "rb") as handle:
+        pdf_name = Path(result.paths["pdf_path"]).name
+        st.download_button(
+            t("download_pdf", lang),
+            data=result.artifacts.pdf_bytes,
+            file_name=pdf_name,
+            mime="application/pdf",
+        )
+        if result.artifacts.finvoice_bytes and result.paths.get("finvoice_path"):
+            finvoice_name = Path(result.paths["finvoice_path"]).name
             st.download_button(
-                t("download_pdf", lang),
-                data=handle.read(),
-                file_name=Path(final_pdf_path).name,
-                mime="application/pdf",
+                "Download Finvoice XML",
+                data=result.artifacts.finvoice_bytes,
+                file_name=finvoice_name,
+                mime="application/xml",
             )
-        if finvoice_path:
-            with open(finvoice_path, "rb") as handle:
-                st.download_button(
-                    "Download Finvoice XML",
-                    data=handle.read(),
-                    file_name=Path(finvoice_path).name,
-                    mime="application/xml",
-                )
-        logger.info("Saved receipt %s", receipt_no)
+        logger.info("Saved receipt %s", result.artifacts.invoice_no)
     except Exception as exc:
-        try:
-            ledger.append_event(
-                now,
-                {
-                    "event_type": "FAILED",
-                    "receipt_no": receipt_no,
-                    "reason": str(exc),
-                    "created_at": created_at,
-                },
-            )
-        except Exception:
-            logger.exception("Failed to append FAILED ledger event")
         logger.exception("Receipt save failed")
         st.error(str(exc))
