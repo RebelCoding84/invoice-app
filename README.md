@@ -65,7 +65,7 @@ cd C:\Projektit\invoice-app
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python -m streamlit run app.py --server.port 8501
+python -m streamlit run app.py --server.port 8501 --server.fileWatcherType poll
 ```
 Runs on http://127.0.0.1:8501
 
@@ -86,6 +86,7 @@ npm.cmd run dev
 ```
 Runs on http://127.0.0.1:3000  
 Note: the backend API must be running at the same time.
+API base URL: http://127.0.0.1:8000
 
 ## Configuration (.env)
 Key environment variables:
@@ -111,6 +112,7 @@ Key environment variables:
 ## Troubleshooting
 - PowerShell ExecutionPolicy blocks npm: use `npm.cmd`
 - Missing Python deps: run `pip install -r requirements.txt`
+- PowerShell blocks Activate.ps1: run `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` and activate again
 
 ## Roadmap
 - Improved invoice layout and styling
