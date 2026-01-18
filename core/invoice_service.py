@@ -18,7 +18,7 @@ from config import (
     DATA_DIR,
     TIMEZONE,
 )
-from outputs.finvoice import generate_finvoice_xml
+from outputs.finvoice import generate_finvoice_minimal_xml, validate_finvoice_bytes
 from outputs.pdf import render_receipt_pdf
 from storage import excel, ledger
 from storage.archive_manager import move_receipt_to_month
@@ -64,6 +64,7 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
     issue_date = draft.issue_date or _get_now()
     due_date = draft.due_date or issue_date + timedelta(days=14)
     totals = compute_totals(quantity, unit_price, draft.line.vat_percent)
+    totals_payload = dict(totals)
 
     receipt_no = _next_receipt_no(DATA_DIR / "sequence.txt")
     created_at = issue_date.isoformat()
@@ -123,8 +124,11 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
             )
             exports_dir.mkdir(parents=True, exist_ok=True)
             finvoice_path = exports_dir / f"finvoice_{receipt_no:06d}.xml"
-            generate_finvoice_xml(str(finvoice_path), payload, company)
-            finvoice_bytes = Path(finvoice_path).read_bytes()
+            totals_payload["invoice_no"] = receipt_no
+            finvoice_bytes = generate_finvoice_minimal_xml(draft, totals_payload, company)
+            if not validate_finvoice_bytes(finvoice_bytes):
+                raise ValueError("Finvoice XML validation failed")
+            finvoice_path.write_bytes(finvoice_bytes)
 
         excel_row = excel.save_row_to_excel(
             str(DATA_DIR / "ledger.xlsx"),
