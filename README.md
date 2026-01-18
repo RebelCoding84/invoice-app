@@ -40,19 +40,34 @@ invoice-app/
 ```
 
 ## Quick Start (Windows PowerShell)
+
+### 1) Lite UI (Streamlit)
 ```powershell
 cd C:\Projektit\invoice-app
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run app.py --server.port 8501
 ```
+Runs on http://127.0.0.1:8501
 
-## API Server (FastAPI)
-Start the local API wrapper around the core service:
+### 2) API (FastAPI)
 ```powershell
-uvicorn server.main:app --host 127.0.0.1 --port 8000
+cd C:\Projektit\invoice-app
+.\.venv\Scripts\activate
+python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 ```
+Test: http://127.0.0.1:8000/api/v1/health  
+Docs: http://127.0.0.1:8000/docs
+
+### 3) Pro UI (Next.js)
+```powershell
+cd C:\Projektit\invoice-app\frontend
+npm.cmd install
+npm.cmd run dev
+```
+Runs on http://127.0.0.1:3000  
+Note: the backend API must be running at the same time.
 
 ## Configuration (.env)
 Key environment variables:
@@ -76,6 +91,10 @@ Key environment variables:
 - Local-first: no cloud dependency by default
 - Append-only JSONL ledger for traceability
 - SHA-256 hashes for PDF integrity checks
+
+## Troubleshooting
+- PowerShell ExecutionPolicy blocks npm: use `npm.cmd`
+- Missing Python deps: run `pip install -r requirements.txt`
 
 ## Roadmap
 - Improved invoice layout and styling
