@@ -16,11 +16,12 @@ from config import (
     COMPANY_VAT,
     COMPANY_WEB,
     DATA_DIR,
+    BACKUP_DIR,
     TIMEZONE,
 )
 from outputs.finvoice import generate_finvoice_minimal_xml, validate_finvoice_bytes
 from outputs.pdf import render_receipt_pdf
-from storage import excel, ledger
+from storage import ledger
 from storage.archive_manager import move_receipt_to_month
 from storage.backup_manager import create_backup_zip
 from utils.atomic import atomic_write_text
@@ -112,7 +113,7 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
         tmp_dir.mkdir(parents=True, exist_ok=True)
         temp_pdf_path = tmp_dir / f"receipt_{receipt_no:06d}_tmp.pdf"
         render_receipt_pdf(str(temp_pdf_path), payload, company)
-        final_pdf_path = move_receipt_to_month(str(temp_pdf_path), issue_date, receipt_no)
+        final_pdf_path = move_receipt_to_month(str(temp_pdf_path), base_dir="storage")
         pdf_bytes = Path(final_pdf_path).read_bytes()
 
         if options.generate_finvoice:
@@ -130,24 +131,12 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
                 raise ValueError("Finvoice XML validation failed")
             finvoice_path.write_bytes(finvoice_bytes)
 
-        excel_row = excel.save_row_to_excel(
+        excel_row = ledger.append_ledger(
             str(DATA_DIR / "ledger.xlsx"),
-            {
-                "receipt_no": receipt_no,
-                "created_at": created_at,
-                "customer": draft.customer.name,
-                "item": draft.line.description,
-                "qty": float(quantity),
-                "unit_price": float(unit_price),
-                "vat_pct": float(totals["vat_percent"]),
-                "subtotal": float(totals["subtotal_ex_vat"]),
-                "vat": float(totals["vat_amount"]),
-                "total": float(totals["total_inc_vat"]),
-                "pay_method": draft.payment_method,
-                "note": draft.notes,
-                "provider": "local",
-                "pdf_path": final_pdf_path,
-            },
+            str(receipt_no),
+            draft.customer.name,
+            totals,
+            draft.currency,
         )
 
         pdf_sha256 = ledger.compute_sha256(final_pdf_path)
@@ -165,7 +154,12 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
         ledger.append_event(issue_date, event)
 
         if options.enable_backup and BACKUP_ENABLED:
-            create_backup_zip(issue_date)
+            backup_target = BACKUP_DIR / f"backup_{issue_date:%Y-%m}.zip"
+            include_paths = [
+                str(Path("storage") / f"{issue_date:%Y-%m}"),
+                str(DATA_DIR / "ledger.xlsx"),
+            ]
+            create_backup_zip(str(backup_target), include_paths)
 
         artifacts = InvoiceArtifacts(
             pdf_bytes=pdf_bytes,
