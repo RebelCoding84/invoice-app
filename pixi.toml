@@ -1,0 +1,23 @@
+[project]
+name = "invoice-app"
+channels = ["conda-forge"]
+platforms = ["linux-64", "win-64"]
+
+[dependencies]
+python = "3.12.*"
+
+[pypi-dependencies]
+streamlit = "==1.38.0"
+openpyxl = "==3.1.5"
+reportlab = "==4.2.2"
+cryptography = "==42.0.8"
+python-dotenv = "==1.0.1"
+requests = "==2.31.0"
+watchdog = "==4.0.1"
+fastapi = "*"
+uvicorn = "*"
+
+[tasks]
+lite = "python -m streamlit run app.py --server.address 127.0.0.1 --server.port 8501"
+api = "python -m uvicorn server.main:app --host 127.0.0.1 --port 8000"
+env = "python scripts/print_env.py"
