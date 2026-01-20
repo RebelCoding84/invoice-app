@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  pixi-ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pixi
+        uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          pixi-version: latest
+          cache: true
+
+      - name: Install
+        run: pixi install
+
+      - name: Env info
+        run: pixi run env
+
+      - name: Smoke import test
+        run: pixi run python -c "import core.invoice_service, outputs.finvoice, outputs.pdf, storage.ledger; print('imports ok')"
