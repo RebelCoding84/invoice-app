@@ -14,9 +14,30 @@ __pycache__/
 # Local runtime artifacts
 logs/
 backups/
-storage/
+# --- Runtime / generated files (ignore) ---
+storage/*.db
+storage/*.sqlite
+storage/*.zip
+storage/*.log
+storage/tmp/
+storage/archive/
+
+outputs/*.pdf
+outputs/*.xml
+outputs/*.tmp
+outputs/*.zip
+
+# --- BUT keep code tracked ---
+!outputs/__init__.py
+!outputs/pdf.py
+!outputs/finvoice.py
+
+# If storage contains python modules, keep them tracked
+!storage/**
+
+# (and ensure python files are never ignored)
+!storage/**/*.py
 receipts/
-outputs/
 data/
 
 # Secrets
