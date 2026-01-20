@@ -58,3 +58,18 @@ frontend/.env.*.local
 .DS_Store
 .vscode/
 Thumbs.db
+
+# --- Never commit runtime storage data ---
+storage/**/*.pdf
+storage/**/*.xml
+storage/**/*.jsonl
+storage/**/*.zip
+storage/**/*.tmp
+
+# --- Never commit python caches ---
+__pycache__/
+*.pyc
+
+# --- Keep python source inside storage tracked ---
+!storage/**/*.py
+!storage/__init__.py
