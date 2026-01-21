@@ -1,48 +1,82 @@
-# Invoice App (Streamlit Lite UI)
+# Invoice App
 
-> Huom: UI tukee suomea ja englantia (fi/en).
+Local-first invoice and receipt application designed for small businesses and independent professionals.  
+The system focuses on reliability, auditability, and simplicity, without mandatory cloud dependencies.
 
-## Evaluation / Arviointi (tärkein osa)
+The application provides a Streamlit-based user interface for creating invoices and receipts, generating PDF documents and Finvoice XML files, and maintaining a verifiable local transaction ledger.
 
-Tämän projektin arviointia varten ensisijainen käyttöliittymä on **Streamlit Lite UI**.  
-Lite UI mahdollistaa laskun/kuitin luomisen ja **PDF- sekä Finvoice XML** -tiedostojen tuottamisen paikallisesti.
+---
 
-Muut komponentit (API, Pro UI) ovat mukana arkkitehtuurissa jatkokehitystä varten, mutta ne eivät ole välttämättömiä projektin arviointiin.
+## Overview
 
-### Quickstart (Evaluation)
+Invoice App is built around a clear separation of concerns:
 
-**Prerequisites**
-- Pixi (Python-ympäristön deterministinen hallinta)
+- **User Interface**: Streamlit-based Lite UI for local operation
+- **Core logic**: Centralized invoice calculation and document generation
+- **Storage**: Append-only ledger and monthly archive structure
+- **Extensibility**: Optional API and browser-based Pro UI for future expansion
 
-**Run**
+The system is intentionally local-first and deterministic, making it suitable for environments where data sovereignty and transparency are required.
+
+---
+
+## Key Features
+
+- Streamlit UI with Finnish and English language support (fi/en)
+- PDF invoice and receipt generation (ReportLab)
+- Finvoice XML generation for manual bank/operator upload
+- Centralized monetary calculations using Decimal arithmetic
+- Append-only JSONL integrity ledger with SHA-256 hash chaining
+- Monthly storage structure (`storage/YYYY/MM`)
+- Optional ZIP backups with retention policy
+- Atomic file writes (Windows-safe)
+- No mandatory external services or cloud dependencies
+
+---
+
+## Architecture Modes
+
+The application supports multiple execution modes:
+
+### Lite UI (Primary Mode)
+- Streamlit-based local user interface
+- Intended for direct user interaction and document generation
+- Fully functional without API or browser-based UI
+
+### API (Extension)
+- FastAPI wrapper around the core service
+- Enables programmatic access and integration
+- Used by the Pro UI
+
+### Pro UI (Extension)
+- Next.js-based browser interface
+- Provides a dashboard-style experience
+- Requires the API to be running
+
+Only the Lite UI is required for core functionality.
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Pixi (deterministic Python environment manager)
+
+### Install and Run (Lite UI)
+
 ```bash
 pixi install
 pixi run smoke
 pixi run lite
 ```
 
-Streamlit käynnistyy ja UI avautuu selaimeen. UI:lla voit luoda laskun/kuitin ja ladata PDF- sekä Finvoice XML -tiedostot.
+The Streamlit interface will open in your browser.
+From the UI, you can create invoices or receipts and export PDF and Finvoice XML files.
 
-## Overview
+---
 
-Local-first laskutus/kuittisovellus pienyrittäjälle. Sovellus tuottaa:
-
-- PDF-dokumentin (ReportLab)
-- Finvoice XML -rungon (manuaalinen OP-upload -polku UI:ssa)
-- kirjanpidollisen tapahtumalokin (append-only ledger) ja arkistoinnin (kuukausirakenne)
-- Ei pilviriippuvuuksia oletuksena.
-
-## Features
-
-- Streamlit UI (fi/en)
-- PDF generation (ReportLab)
-- Append-only JSONL integrity ledger (SHA-256)
-- Monthly storage structure: storage/YYYY/MM
-- Optional ZIP backups + retention
-- CI (GitHub Actions) + smoke/import test
-- Pixi-locked runtime (Python 3.12 conda-forge)
-
-## Project structure (high-level)
+## Project Structure (High Level)
 
 ```
 invoice-app/
@@ -58,54 +92,76 @@ invoice-app/
   scripts/
 ```
 
-## Known limitations (current)
+---
 
-- PDF: “Invoice #” voi näkyä vielä N/A vaikka Finvoice XML sisältää invoice numberin.
-  (Numeroiden läpivienti PDF-headeriin viimeistellään jatkokehityksessä.)
-- Finvoice XML on tässä vaiheessa “rungon” tasolla; pankki-/operaattoritason validointi ja automaattinen lähetys ovat jatkokehitystä.
+## Data and Storage
 
-## Extensions (optional)
+`data/`  
+Stores sequence counters and ledger-related metadata.
 
-### API (FastAPI)
+`storage/YYYY/MM/`  
+Monthly archive containing generated documents and metadata.
 
-API toimii “thin wrapperina” core-palvelun ympärillä ja mahdollistaa Pro UI:n.
+`storage/**/meta/*.jsonl`  
+Append-only integrity ledger with SHA-256 hash chaining.
 
-Tämä ei ole osa arvioinnin minimipolkua.
+`backups/`  
+Optional ZIP backups of monthly archives.
 
-```bash
-pixi run api
-```
+---
 
-Test:
+## Security and Integrity
 
-- http://127.0.0.1:8000/docs
-- http://127.0.0.1:8000/api/v1/health (jos endpoint on käytössä)
+- Local-first design (no cloud dependency by default)
+- Append-only ledger for traceability
+- SHA-256 hashing for document integrity
+- Atomic file operations to prevent partial writes
 
-### Pro UI (Next.js)
+---
 
-Pro UI on Next.js-pohjainen dashboard.
+## Configuration
 
-Tämä ei ole osa arvioinnin minimipolkua.
+Configuration is handled via environment variables.
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Common variables include:
 
-## Data & storage
+- `TIMEZONE` (default: `Europe/Helsinki`)
+- `BACKUP_ENABLED` (default: `true`)
+- `BACKUP_RETENTION_DAYS`
+- `DEFAULT_LOCALE` (`fi` / `en`)
+- `DEFAULT_PROVIDER`
+- `COMPANY_NAME`
+- `COMPANY_ID`
+- `COMPANY_VAT`
+- `COMPANY_ADDRESS`
+- `COMPANY_EMAIL`
+- `COMPANY_PHONE`
+- `COMPANY_WEB`
 
-- data/: esim. sekvenssit ja ledger-data
-- storage/YYYY/MM/: kuukausiarkisto (PDF/XML/export/meta)
-- storage/**/meta/*.jsonl: append-only integrity ledger
-- backups/: ZIP-varmuuskopiot (jos käytössä)
+An example configuration file can be provided separately if needed.
 
-## Security notes
+---
 
-- Local-first: ei ulkoisia palveluja oletuksena
-- Append-only integrity ledger (SHA-256)
-- Atomic writes (Windows-safe)
+## Known Limitations
+
+- PDF invoice number rendering may be incomplete in the current version, even when the Finvoice XML contains a valid invoice number.
+- Finvoice XML generation currently targets manual bank/operator upload workflows.
+- Automated sending and operator-level validation are planned for future versions.
+
+---
+
+## Roadmap
+
+- Improved PDF layout and styling
+- Company logo support
+- Full payment terms and reference handling
+- Enhanced Finvoice compliance validation
+- Automated bank/operator submission workflows
+- Digital signing and verification
+
+---
 
 ## License
 
-Planned: AGPLv3 (placeholder)
+Planned: AGPLv3  
+(Currently a placeholder until the licensing model is finalized.)
