@@ -41,6 +41,9 @@ Local-first laskutus/kuittisovellus pienyrittäjälle. Sovellus tuottaa:
 - Optional ZIP backups + retention
 - CI (GitHub Actions) + smoke/import test
 - Pixi-locked runtime (Python 3.12 conda-forge)
+
+## Project structure (high-level)
+
 ```
 invoice-app/
   app.py
@@ -106,12 +109,3 @@ npm run dev
 ## License
 
 Planned: AGPLv3 (placeholder)
-
----
-
-## 2) Kuvien lisääminen repoosi (nopea ja siisti tapa)
-
-1) Luo kansio:
-```bash
-mkdir -p docs/images
-```
