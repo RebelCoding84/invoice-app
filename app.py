@@ -37,6 +37,34 @@ def _get_now() -> datetime:
     return datetime.now(tz=tz)
 
 
+def _build_invoice_customer(
+    customer_name: str,
+    customer_choice: str,
+    customers: list[dict],
+) -> Customer:
+    """Use saved customer metadata when the selected customer is available."""
+    selected_customer = None
+    if customer_choice != "(new)":
+        selected_customer = next(
+            (
+                customer
+                for customer in customers
+                if customer.get("name", "").strip() == customer_choice.strip()
+            ),
+            None,
+        )
+
+    if selected_customer and customer_name.strip() == selected_customer.get("name", "").strip():
+        return Customer(
+            name=customer_name,
+            email=selected_customer.get("email", "").strip(),
+            address=selected_customer.get("address", "").strip(),
+            vat_id=selected_customer.get("vat_id", "").strip(),
+        )
+
+    return Customer(name=customer_name, email="", address="", vat_id="")
+
+
 st.set_page_config(page_title="Rebel Invoice", layout="wide")
 logger = _setup_logging()
 
@@ -155,7 +183,7 @@ if submitted:
     due_date = now + timedelta(days=14)
 
     draft = InvoiceDraft(
-        customer=Customer(name=customer, email="", address="", vat_id=""),
+        customer=_build_invoice_customer(customer, customer_choice, customers),
         line=InvoiceLine(
             description=item_name,
             quantity=qty_dec,
