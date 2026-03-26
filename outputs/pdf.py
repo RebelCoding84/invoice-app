@@ -38,6 +38,19 @@ def _format_date(value: Any) -> str:
     return str(value)
 
 
+def _coerce_company(company: dict[str, Any]) -> dict[str, Any]:
+    company = company or {}
+    return {
+        "name": company.get("name") or company.get("company_name") or company.get("COMPANY_NAME") or "",
+        "id": company.get("id") or company.get("company_id") or company.get("COMPANY_ID") or "",
+        "vat": company.get("vat") or company.get("company_vat") or company.get("COMPANY_VAT") or "",
+        "address": company.get("address") or company.get("company_address") or company.get("COMPANY_ADDRESS") or "",
+        "email": company.get("email") or company.get("company_email") or company.get("COMPANY_EMAIL") or "",
+        "phone": company.get("phone") or company.get("company_phone") or company.get("COMPANY_PHONE") or "",
+        "web": company.get("web") or company.get("company_web") or company.get("COMPANY_WEB") or "",
+    }
+
+
 def _coerce_customer(payload: dict[str, Any]) -> dict[str, Any]:
     customer = payload.get("customer")
     if isinstance(customer, dict):
@@ -45,6 +58,8 @@ def _coerce_customer(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": payload.get("customer_name") or (str(customer) if customer else ""),
         "address": payload.get("customer_address") or "",
+        "email": payload.get("customer_email") or payload.get("email") or "",
+        "vat_id": payload.get("customer_vat_id") or payload.get("vat_id") or "",
     }
 
 
@@ -75,7 +90,7 @@ def _coerce_totals(payload: dict[str, Any]) -> dict[str, Any]:
 def render_receipt_pdf(output_path: str, payload: dict, company: dict) -> bytes:
     """Render a minimal receipt/invoice PDF and return its bytes."""
     payload = payload or {}
-    company = company or {}
+    company = _coerce_company(company)
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,7 +99,7 @@ def render_receipt_pdf(output_path: str, payload: dict, company: dict) -> bytes:
     width, height = A4
 
     title = "Receipt / Invoice"
-    company_name = company.get("name") or company.get("company_name") or "N/A"
+    company_name = company.get("name") or "N/A"
     invoice_no = (
         payload.get("invoice_no")
         or payload.get("receipt_no")
@@ -106,6 +121,24 @@ def render_receipt_pdf(output_path: str, payload: dict, company: dict) -> bytes:
     c.setFont("Helvetica", 12)
     c.drawString(72, y, f"Company: {company_name}")
     y -= 18
+    if company.get("id"):
+        c.drawString(72, y, f"Company ID: {_format_value(company.get('id'))}")
+        y -= 18
+    if company.get("vat"):
+        c.drawString(72, y, f"Company VAT: {_format_value(company.get('vat'))}")
+        y -= 18
+    if company.get("address"):
+        c.drawString(72, y, f"Company address: {_format_value(company.get('address'))}")
+        y -= 18
+    if company.get("email"):
+        c.drawString(72, y, f"Company email: {_format_value(company.get('email'))}")
+        y -= 18
+    if company.get("phone"):
+        c.drawString(72, y, f"Company phone: {_format_value(company.get('phone'))}")
+        y -= 18
+    if company.get("web"):
+        c.drawString(72, y, f"Company web: {_format_value(company.get('web'))}")
+        y -= 18
     c.drawString(72, y, f"Invoice #: {invoice_no}")
     y -= 18
     c.drawString(72, y, f"Issue date: {_format_date(payload.get('issue_date') or payload.get('date'))}")
@@ -116,7 +149,15 @@ def render_receipt_pdf(output_path: str, payload: dict, company: dict) -> bytes:
     customer_address = customer.get("address") or ""
     if customer_address:
         y -= 18
-        c.drawString(72, y, f"Address: {_format_value(customer_address)}")
+        c.drawString(72, y, f"Customer address: {_format_value(customer_address)}")
+    customer_email = customer.get("email") or ""
+    if customer_email:
+        y -= 18
+        c.drawString(72, y, f"Customer email: {_format_value(customer_email)}")
+    customer_vat = customer.get("vat_id") or ""
+    if customer_vat:
+        y -= 18
+        c.drawString(72, y, f"Customer VAT ID: {_format_value(customer_vat)}")
     y -= 18
     c.drawString(72, y, f"Reference: {_format_value(reference)}")
     y -= 18

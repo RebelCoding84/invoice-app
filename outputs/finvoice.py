@@ -25,6 +25,19 @@ def _text(parent: ET.Element, tag: str, value) -> ET.Element:
     return elem
 
 
+def _coerce_seller(seller: dict) -> dict[str, str]:
+    seller = seller or {}
+    return {
+        "name": seller.get("name") or seller.get("company_name") or seller.get("COMPANY_NAME") or "",
+        "id": seller.get("id") or seller.get("company_id") or seller.get("COMPANY_ID") or "",
+        "vat": seller.get("vat") or seller.get("company_vat") or seller.get("COMPANY_VAT") or "",
+        "address": seller.get("address") or seller.get("company_address") or seller.get("COMPANY_ADDRESS") or "",
+        "email": seller.get("email") or seller.get("company_email") or seller.get("COMPANY_EMAIL") or "",
+        "phone": seller.get("phone") or seller.get("company_phone") or seller.get("COMPANY_PHONE") or "",
+        "web": seller.get("web") or seller.get("company_web") or seller.get("COMPANY_WEB") or "",
+    }
+
+
 def generate_finvoice_minimal_xml(
     draft: InvoiceDraft, totals: dict, seller: dict
 ) -> bytes:
@@ -34,6 +47,7 @@ def generate_finvoice_minimal_xml(
     created_dt = _to_datetime(issue_date)
     due_dt = _to_datetime(due_date)
 
+    seller = _coerce_seller(seller)
     invoice_no = totals.get("invoice_no") or totals.get("receipt_no") or ""
     currency = draft.currency or "EUR"
 
@@ -45,12 +59,8 @@ def generate_finvoice_minimal_xml(
     _text(root, "InvoiceCurrencyCode", currency)
 
     seller_details = ET.SubElement(root, "SellerPartyDetails")
-    _text(seller_details, "SellerPartyName", seller.get("name") or seller.get("COMPANY_NAME") or "")
-    _text(
-        seller_details,
-        "SellerPartyIdentifier",
-        seller.get("id") or seller.get("COMPANY_ID") or "",
-    )
+    _text(seller_details, "SellerPartyName", seller.get("name") or "")
+    _text(seller_details, "SellerPartyIdentifier", seller.get("id") or "")
 
     buyer_details = ET.SubElement(root, "BuyerPartyDetails")
     _text(buyer_details, "BuyerPartyName", draft.customer.name)

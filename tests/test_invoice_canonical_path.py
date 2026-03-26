@@ -11,6 +11,9 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
+import xml.etree.ElementTree as ET
+
+from fastapi import HTTPException
 
 import core.invoice_service as invoice_service
 import server.main as server_main
@@ -212,23 +215,58 @@ class TestInvoiceCanonicalPath(unittest.TestCase):
             with _invoice_runtime(tmp_path), _render_spy() as render_calls:
                 result = invoice_service.create_invoice(
                     _build_draft(),
-                    InvoiceOptions(generate_finvoice=False, enable_backup=False),
+                    InvoiceOptions(generate_finvoice=True, enable_backup=False),
                 )
                 pdf_path = Path(result.paths["pdf_path"]).resolve()
                 pdf_bytes = pdf_path.read_bytes()
 
             self.assertEqual(result.artifacts.invoice_no, "1")
             self.assertEqual(Path(result.paths["pdf_path"]).name, "receipt_000001.pdf")
+            self.assertEqual(Path(result.paths["finvoice_path"]).name, "finvoice_000001.xml")
             self.assertEqual(len(render_calls), 1)
+            self.assertIsNotNone(result.artifacts.finvoice_bytes)
 
             payload = render_calls[0]["payload"]
+            company = render_calls[0]["company"]
             self.assertEqual(payload["invoice_no"], result.artifacts.invoice_no)
             self.assertEqual(payload["receipt_no"], result.artifacts.invoice_no)
             self.assertEqual(payload["customer"]["name"], "Acme Oy")
             self.assertEqual(payload["totals"]["total_inc_vat"], Decimal("24.80"))
+            self.assertEqual(company["name"], "Test Co")
+            self.assertEqual(company["id"], "1234567-8")
+            self.assertEqual(company["vat"], "FI12345678")
+            self.assertEqual(company["address"], "Main Street 1")
+            self.assertEqual(company["email"], "info@example.com")
+            self.assertEqual(company["phone"], "+358000000")
+            self.assertEqual(company["web"], "https://example.com")
 
             pdf_text = _extract_reportlab_text(pdf_bytes)
             self.assertIn(f"Invoice #: {result.artifacts.invoice_no}", pdf_text)
+            self.assertIn("Company: Test Co", pdf_text)
+            self.assertIn("Company ID: 1234567-8", pdf_text)
+            self.assertIn("Company VAT: FI12345678", pdf_text)
+            self.assertIn("Company address: Main Street 1", pdf_text)
+            self.assertIn("Company email: info@example.com", pdf_text)
+            self.assertIn("Company phone: +358000000", pdf_text)
+            self.assertIn("Company web: https://example.com", pdf_text)
+            self.assertIn("Customer: Acme Oy", pdf_text)
+            self.assertIn("Customer address: Test Street 1", pdf_text)
+            self.assertIn("Customer email: billing@example.com", pdf_text)
+            self.assertIn("Customer VAT ID: FI12345678", pdf_text)
+
+            finvoice_root = ET.fromstring(result.artifacts.finvoice_bytes)
+            self.assertEqual(
+                finvoice_root.findtext("InvoiceNumber"),
+                result.artifacts.invoice_no,
+            )
+            self.assertEqual(
+                finvoice_root.findtext("SellerPartyDetails/SellerPartyName"),
+                "Test Co",
+            )
+            self.assertEqual(
+                finvoice_root.findtext("SellerPartyDetails/SellerPartyIdentifier"),
+                "1234567-8",
+            )
 
     def test_fastapi_create_invoice_and_pdf_download_round_trip(self):
         import tempfile
@@ -252,6 +290,65 @@ class TestInvoiceCanonicalPath(unittest.TestCase):
 
             self.assertEqual(pdf_response.media_type, "application/pdf")
             self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+
+    def test_fastapi_create_invoice_validation_failure_returns_client_error(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            with _invoice_runtime(tmp_path), patch.object(
+                invoice_service, "COMPANY_ID", ""
+            ), _render_spy() as render_calls:
+                payload = _build_request_payload()
+                payload["options"]["generate_finvoice"] = True
+                request_model = InvoiceCreateRequest.model_validate(payload)
+
+                with self.assertRaises(HTTPException) as ctx:
+                    server_main.create_invoice_endpoint(request_model)
+
+            self.assertEqual(ctx.exception.status_code, 422)
+            self.assertEqual(
+                ctx.exception.detail,
+                "Company identifier is required for Finvoice generation",
+            )
+            self.assertEqual(render_calls, [])
+
+    def test_company_metadata_validation_blocks_missing_required_fields(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+
+            with self.subTest("missing company name"):
+                with _invoice_runtime(tmp_path), patch.object(
+                    invoice_service, "COMPANY_NAME", ""
+                ), _render_spy() as render_calls:
+                    with self.assertRaisesRegex(
+                        ValueError, "Company name is required for PDF generation"
+                    ):
+                        invoice_service.create_invoice(
+                            _build_draft(),
+                            InvoiceOptions(
+                                generate_finvoice=False, enable_backup=False
+                            ),
+                        )
+                self.assertEqual(render_calls, [])
+                self.assertFalse((tmp_path / "data" / "sequence.txt").exists())
+
+            with self.subTest("missing company identifier for finvoice"):
+                with _invoice_runtime(tmp_path), patch.object(
+                    invoice_service, "COMPANY_ID", ""
+                ), _render_spy() as render_calls:
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "Company identifier is required for Finvoice generation",
+                    ):
+                        invoice_service.create_invoice(
+                            _build_draft(),
+                            InvoiceOptions(generate_finvoice=True, enable_backup=False),
+                        )
+                self.assertEqual(render_calls, [])
+                self.assertFalse((tmp_path / "data" / "sequence.txt").exists())
 
     def test_cors_preflight_allows_local_dev_origins_and_headers(self):
         status_code, response_headers, _ = _asgi_options_request(
