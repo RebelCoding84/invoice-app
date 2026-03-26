@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from core.invoice_service import create_invoice
@@ -12,6 +13,15 @@ from server.security import verify_api_key
 from server.settings import API_HOST, API_PORT
 
 app = FastAPI(title="Rebel Invoice API", version="0.2.x")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+    ],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key"],
+)
 
 
 def _find_file(base: Path, pattern: str) -> Path | None:
@@ -62,6 +72,9 @@ def create_invoice_endpoint(payload: InvoiceCreateRequest) -> InvoiceCreateRespo
 def get_invoice_pdf(invoice_no: str) -> FileResponse:
     pattern = _invoice_pattern(invoice_no, "receipt", "pdf")
     path = _find_file(Path("storage"), f"**/receipts/{pattern}")
+    if not path:
+        legacy_pattern = pattern.replace(".pdf", "_tmp.pdf")
+        path = _find_file(Path("storage"), f"**/receipts/{legacy_pattern}")
     if not path:
         raise HTTPException(status_code=404, detail="PDF not found")
     return FileResponse(path, media_type="application/pdf", filename=path.name)

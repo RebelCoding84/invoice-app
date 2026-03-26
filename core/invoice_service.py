@@ -38,7 +38,7 @@ def _get_now() -> datetime:
     return datetime.now(tz=tz)
 
 
-def _next_receipt_no(seq_path: Path) -> int:
+def _next_invoice_no(seq_path: Path) -> int:
     seq_path.parent.mkdir(parents=True, exist_ok=True)
     current = 0
     if seq_path.exists():
@@ -49,6 +49,44 @@ def _next_receipt_no(seq_path: Path) -> int:
     new_value = current + 1
     atomic_write_text(str(seq_path), f"{new_value}\n", encoding="utf-8")
     return new_value
+
+
+def _next_receipt_no(seq_path: Path) -> int:
+    """Legacy alias kept for compatibility with older imports."""
+    return _next_invoice_no(seq_path)
+
+
+def _build_invoice_payload(
+    draft: InvoiceDraft,
+    invoice_no: str,
+    issue_date: datetime,
+    due_date: datetime,
+    totals: dict,
+) -> dict:
+    """Build the canonical invoice payload consumed by PDF rendering."""
+    return {
+        "invoice_no": invoice_no,
+        "receipt_no": invoice_no,
+        "issue_date": issue_date.isoformat(),
+        "due_date": due_date.isoformat(),
+        "customer": {
+            "name": draft.customer.name,
+            "email": draft.customer.email,
+            "address": draft.customer.address,
+            "vat_id": draft.customer.vat_id,
+        },
+        "line": {
+            "description": draft.line.description,
+            "quantity": draft.line.quantity,
+            "unit_price": draft.line.unit_price,
+            "vat_percent": totals["vat_percent"],
+        },
+        "totals": dict(totals),
+        "payment_method": draft.payment_method,
+        "notes": draft.notes,
+        "reference": draft.notes,
+        "currency": draft.currency,
+    }
 
 
 def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResult:
@@ -65,36 +103,12 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
     issue_date = draft.issue_date or _get_now()
     due_date = draft.due_date or issue_date + timedelta(days=14)
     totals = compute_totals(quantity, unit_price, draft.line.vat_percent)
-    totals_payload = dict(totals)
+    invoice_no = _next_invoice_no(DATA_DIR / "sequence.txt")
+    invoice_no_str = str(invoice_no)
+    invoice_payload = _build_invoice_payload(draft, invoice_no_str, issue_date, due_date, totals)
+    invoice_totals_payload = dict(totals)
 
-    receipt_no = _next_receipt_no(DATA_DIR / "sequence.txt")
     created_at = issue_date.isoformat()
-
-    payload = {
-        "receipt_no": receipt_no,
-        "date": created_at,
-        "created_at": created_at,
-        "due_date": due_date.isoformat(),
-        "customer": draft.customer.name,
-        "customer_name": draft.customer.name,
-        "reference": draft.notes,
-        "pay_method": draft.payment_method,
-        "item": draft.line.description,
-        "qty": str(quantity),
-        "unit_price": str(unit_price),
-        "vat_pct": str(totals["vat_percent"]),
-        "subtotal": str(totals["subtotal_ex_vat"]),
-        "vat_amount": str(totals["vat_amount"]),
-        "total": str(totals["total_inc_vat"]),
-        "currency": draft.currency,
-        "items": [
-            {
-                "name": draft.line.description,
-                "qty": str(quantity),
-                "unit_price": str(unit_price),
-            }
-        ],
-    }
     company = {
         "name": COMPANY_NAME,
         "address": COMPANY_ADDRESS,
@@ -111,8 +125,9 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
     try:
         tmp_dir = Path("outputs")
         tmp_dir.mkdir(parents=True, exist_ok=True)
-        temp_pdf_path = tmp_dir / f"receipt_{receipt_no:06d}_tmp.pdf"
-        render_receipt_pdf(str(temp_pdf_path), payload, company)
+        # Keep the on-disk PDF name aligned with the API lookup pattern.
+        temp_pdf_path = tmp_dir / f"receipt_{invoice_no:06d}.pdf"
+        render_receipt_pdf(str(temp_pdf_path), invoice_payload, company)
         final_pdf_path = move_receipt_to_month(str(temp_pdf_path), base_dir="storage")
         pdf_bytes = Path(final_pdf_path).read_bytes()
 
@@ -124,16 +139,18 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
                 / "exports"
             )
             exports_dir.mkdir(parents=True, exist_ok=True)
-            finvoice_path = exports_dir / f"finvoice_{receipt_no:06d}.xml"
-            totals_payload["invoice_no"] = receipt_no
-            finvoice_bytes = generate_finvoice_minimal_xml(draft, totals_payload, company)
+            finvoice_path = exports_dir / f"finvoice_{invoice_no:06d}.xml"
+            invoice_totals_payload["invoice_no"] = invoice_no_str
+            finvoice_bytes = generate_finvoice_minimal_xml(
+                draft, invoice_totals_payload, company
+            )
             if not validate_finvoice_bytes(finvoice_bytes):
                 raise ValueError("Finvoice XML validation failed")
             finvoice_path.write_bytes(finvoice_bytes)
 
         excel_row = ledger.append_ledger(
             str(DATA_DIR / "ledger.xlsx"),
-            str(receipt_no),
+            invoice_no_str,
             draft.customer.name,
             totals,
             draft.currency,
@@ -142,7 +159,8 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
         pdf_sha256 = ledger.compute_sha256(final_pdf_path)
         event = {
             "event_type": "SUCCESS",
-            "receipt_no": receipt_no,
+            "invoice_no": invoice_no,
+            "receipt_no": invoice_no,
             "pdf_path": final_pdf_path,
             "pdf_sha256": pdf_sha256,
             "excel_row": excel_row,
@@ -164,7 +182,7 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
         artifacts = InvoiceArtifacts(
             pdf_bytes=pdf_bytes,
             finvoice_bytes=finvoice_bytes,
-            invoice_no=str(receipt_no),
+            invoice_no=invoice_no_str,
         )
         return InvoiceResult(
             totals=totals,
@@ -181,7 +199,8 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
                 issue_date,
                 {
                     "event_type": "FAILED",
-                    "receipt_no": receipt_no,
+                    "invoice_no": invoice_no,
+                    "receipt_no": invoice_no,
                     "reason": str(exc),
                     "created_at": created_at,
                 },
