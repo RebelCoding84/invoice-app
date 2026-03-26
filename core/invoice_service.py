@@ -89,6 +89,26 @@ def _build_invoice_payload(
     }
 
 
+def _build_company_profile() -> dict[str, str]:
+    """Build the canonical company profile consumed by document generators."""
+    return {
+        "name": COMPANY_NAME.strip(),
+        "id": COMPANY_ID.strip(),
+        "vat": COMPANY_VAT.strip(),
+        "address": COMPANY_ADDRESS.strip(),
+        "email": COMPANY_EMAIL.strip(),
+        "phone": COMPANY_PHONE.strip(),
+        "web": COMPANY_WEB.strip(),
+    }
+
+
+def _validate_company_profile(company: dict[str, str], require_finvoice: bool) -> None:
+    if not (company.get("name") or "").strip():
+        raise ValueError("Company name is required for PDF generation")
+    if require_finvoice and not (company.get("id") or "").strip():
+        raise ValueError("Company identifier is required for Finvoice generation")
+
+
 def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResult:
     """Create invoice artifacts and persist ledger entries using existing formats."""
     logger = logging.getLogger("invoice_app")
@@ -103,21 +123,14 @@ def create_invoice(draft: InvoiceDraft, options: InvoiceOptions) -> InvoiceResul
     issue_date = draft.issue_date or _get_now()
     due_date = draft.due_date or issue_date + timedelta(days=14)
     totals = compute_totals(quantity, unit_price, draft.line.vat_percent)
+    company = _build_company_profile()
+    _validate_company_profile(company, options.generate_finvoice)
     invoice_no = _next_invoice_no(DATA_DIR / "sequence.txt")
     invoice_no_str = str(invoice_no)
     invoice_payload = _build_invoice_payload(draft, invoice_no_str, issue_date, due_date, totals)
     invoice_totals_payload = dict(totals)
 
     created_at = issue_date.isoformat()
-    company = {
-        "name": COMPANY_NAME,
-        "address": COMPANY_ADDRESS,
-        "id": COMPANY_ID,
-        "vat": COMPANY_VAT,
-        "email": COMPANY_EMAIL,
-        "phone": COMPANY_PHONE,
-        "web": COMPANY_WEB,
-    }
 
     pdf_bytes = b""
     finvoice_bytes = None

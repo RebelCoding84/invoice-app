@@ -56,7 +56,10 @@ def create_invoice_endpoint(payload: InvoiceCreateRequest) -> InvoiceCreateRespo
         due_date=payload.due_date,
     )
     options = InvoiceOptions(**payload.options.model_dump())
-    result = create_invoice(draft, options)
+    try:
+        result = create_invoice(draft, options)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     totals = {k: str(v) for k, v in result.totals.items()}
     return InvoiceCreateResponse(
         invoice_no=result.artifacts.invoice_no,
