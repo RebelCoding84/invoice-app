@@ -4,8 +4,12 @@ import asyncio
 import base64
 import contextlib
 import copy
+import importlib.util
 import os
+import sys
 import unittest
+from types import SimpleNamespace
+import types
 import zlib
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -18,6 +22,9 @@ from fastapi import HTTPException
 import core.invoice_service as invoice_service
 import server.main as server_main
 import server.security as server_security
+import storage.catalog as catalog
+import config as app_config
+import utils.i18n as i18n
 from core.models import Customer, InvoiceDraft, InvoiceLine, InvoiceOptions
 from server.schemas import InvoiceCreateRequest
 
@@ -206,6 +213,106 @@ def _render_spy():
         yield calls
 
 
+@contextlib.contextmanager
+def _import_lite_app_with_fakes(
+    tmp_path: Path,
+    customers: list[dict],
+    customer_choice: str,
+):
+    fake_streamlit = types.ModuleType("streamlit")
+    fake_streamlit.session_state = {}
+
+    class FakeSidebar:
+        def selectbox(self, label, options, index=0, key=None):
+            if label == "Language":
+                return "fi"
+            if label == "Provider":
+                return "local"
+            if label == "Customer":
+                return customer_choice
+            if label == "Product":
+                return "(manual)"
+            return options[index]
+
+        def checkbox(self, *args, **kwargs):
+            return False
+
+        def text_input(self, *args, **kwargs):
+            return ""
+
+        def button(self, *args, **kwargs):
+            return False
+
+        def write(self, *args, **kwargs):
+            return None
+
+        def success(self, *args, **kwargs):
+            return None
+
+    @contextlib.contextmanager
+    def fake_form(_name):
+        yield
+
+    fake_streamlit.sidebar = FakeSidebar()
+    fake_streamlit.set_page_config = lambda *args, **kwargs: None
+    fake_streamlit.title = lambda *args, **kwargs: None
+    fake_streamlit.form = fake_form
+    fake_streamlit.text_input = lambda *args, **kwargs: fake_streamlit.session_state.get(
+        kwargs.get("key", ""), ""
+    )
+    fake_streamlit.number_input = lambda *args, **kwargs: kwargs.get("value")
+    fake_streamlit.text_area = lambda *args, **kwargs: ""
+    fake_streamlit.checkbox = lambda *args, **kwargs: False
+    fake_streamlit.form_submit_button = lambda *args, **kwargs: True
+    fake_streamlit.subheader = lambda *args, **kwargs: None
+    fake_streamlit.write = lambda *args, **kwargs: None
+    fake_streamlit.download_button = lambda *args, **kwargs: None
+    fake_streamlit.success = lambda *args, **kwargs: None
+    fake_streamlit.error = lambda *args, **kwargs: None
+    fake_streamlit.exception = lambda *args, **kwargs: None
+
+    captured: dict[str, object] = {}
+
+    def fake_create_invoice(draft, options):
+        captured["draft"] = draft
+        captured["options"] = options
+        return SimpleNamespace(
+            artifacts=SimpleNamespace(
+                pdf_bytes=b"%PDF-1.4",
+                finvoice_bytes=None,
+                invoice_no="1",
+            ),
+            paths={
+                "pdf_path": str(tmp_path / "receipt_000001.pdf"),
+                "finvoice_path": None,
+            },
+            totals={},
+        )
+
+    with patch.object(app_config, "LOG_DIR", tmp_path / "logs"), patch.object(
+        app_config, "DATA_DIR", tmp_path / "data"
+    ), patch.object(catalog, "load_customers", return_value=customers), patch.object(
+        catalog, "load_products", return_value=[]
+    ), patch.object(
+        i18n, "load_locale", return_value="fi"
+    ), patch.object(
+        i18n, "t", side_effect=lambda key, lang: key
+    ), patch.object(
+        invoice_service, "create_invoice", side_effect=fake_create_invoice
+    ), patch.dict(
+        sys.modules, {"streamlit": fake_streamlit}
+    ):
+        spec = importlib.util.spec_from_file_location("app_under_test", Path("app.py"))
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            assert spec.loader is not None
+            spec.loader.exec_module(module)
+            yield module, captured
+        finally:
+            sys.modules.pop(spec.name, None)
+
+
 class TestInvoiceCanonicalPath(unittest.TestCase):
     def test_create_invoice_uses_canonical_payload_and_renders_invoice_number(self):
         import tempfile
@@ -290,6 +397,31 @@ class TestInvoiceCanonicalPath(unittest.TestCase):
 
             self.assertEqual(pdf_response.media_type, "application/pdf")
             self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+
+    def test_lite_selected_customer_passes_full_metadata_to_core(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            customers = [
+                {
+                    "name": "Acme Oy",
+                    "email": "billing@example.com",
+                    "address": "Test Street 1",
+                    "vat_id": "FI12345678",
+                }
+            ]
+            with _import_lite_app_with_fakes(
+                tmp_path,
+                customers=customers,
+                customer_choice="Acme Oy",
+            ) as (_, captured):
+                draft = captured["draft"]
+
+            self.assertEqual(draft.customer.name, "Acme Oy")
+            self.assertEqual(draft.customer.email, "billing@example.com")
+            self.assertEqual(draft.customer.address, "Test Street 1")
+            self.assertEqual(draft.customer.vat_id, "FI12345678")
 
     def test_fastapi_create_invoice_validation_failure_returns_client_error(self):
         import tempfile
