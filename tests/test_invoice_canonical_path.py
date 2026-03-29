@@ -4,6 +4,7 @@ import asyncio
 import base64
 import contextlib
 import copy
+import json
 import importlib.util
 import os
 import sys
@@ -25,7 +26,7 @@ import server.security as server_security
 import storage.catalog as catalog
 import config as app_config
 import utils.i18n as i18n
-from core.models import Customer, InvoiceDraft, InvoiceLine, InvoiceOptions
+from core.models import Customer, InvoiceDraft, InvoiceLine, InvoiceOptions, InvoiceStatus
 from server.schemas import InvoiceCreateRequest
 
 
@@ -119,6 +120,14 @@ def _extract_reportlab_text(pdf_bytes: bytes) -> str:
         offset = endstream_index + len(b"endstream")
 
     return "\n".join(pieces)
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def _asgi_options_request(
@@ -375,6 +384,31 @@ class TestInvoiceCanonicalPath(unittest.TestCase):
                 "1234567-8",
             )
 
+    def test_create_invoice_sets_issued_status_and_persists_it(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            with _invoice_runtime(tmp_path):
+                result = invoice_service.create_invoice(
+                    _build_draft(),
+                    InvoiceOptions(generate_finvoice=True, enable_backup=False),
+                )
+
+            ledger_path = (
+                tmp_path / "storage" / "2026-01" / "meta" / "ledger_2026-01.jsonl"
+            )
+            entries = _read_jsonl(ledger_path)
+
+            self.assertEqual(result.lifecycle.status, InvoiceStatus.ISSUED)
+            self.assertEqual(result.lifecycle.changed_at, _business_issue_date())
+            self.assertGreaterEqual(len(entries), 1)
+            self.assertEqual(entries[-1]["event_type"], "SUCCESS")
+            self.assertEqual(entries[-1]["status"], "issued")
+            self.assertEqual(
+                entries[-1]["status_changed_at"], _business_issue_date().isoformat()
+            )
+
     def test_fastapi_create_invoice_and_pdf_download_round_trip(self):
         import tempfile
 
@@ -397,6 +431,34 @@ class TestInvoiceCanonicalPath(unittest.TestCase):
 
             self.assertEqual(pdf_response.media_type, "application/pdf")
             self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+
+    def test_failed_invoice_event_persists_draft_status(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            with _invoice_runtime(tmp_path), patch.object(
+                invoice_service,
+                "render_receipt_pdf",
+                side_effect=RuntimeError("boom"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    invoice_service.create_invoice(
+                        _build_draft(),
+                        InvoiceOptions(generate_finvoice=False, enable_backup=False),
+                    )
+
+            ledger_path = (
+                tmp_path / "storage" / "2026-01" / "meta" / "ledger_2026-01.jsonl"
+            )
+            entries = _read_jsonl(ledger_path)
+
+            self.assertGreaterEqual(len(entries), 1)
+            self.assertEqual(entries[-1]["event_type"], "FAILED")
+            self.assertEqual(entries[-1]["status"], "draft")
+            self.assertEqual(
+                entries[-1]["status_changed_at"], _business_issue_date().isoformat()
+            )
 
     def test_lite_selected_customer_passes_full_metadata_to_core(self):
         import tempfile
@@ -422,6 +484,24 @@ class TestInvoiceCanonicalPath(unittest.TestCase):
             self.assertEqual(draft.customer.email, "billing@example.com")
             self.assertEqual(draft.customer.address, "Test Street 1")
             self.assertEqual(draft.customer.vat_id, "FI12345678")
+
+    def test_invoice_status_transition_helper_validates_allowed_transitions(self):
+        self.assertEqual(
+            invoice_service.validate_invoice_status_transition(
+                InvoiceStatus.DRAFT, InvoiceStatus.ISSUED
+            ),
+            InvoiceStatus.ISSUED,
+        )
+        self.assertEqual(
+            invoice_service.validate_invoice_status_transition(
+                InvoiceStatus.ISSUED, InvoiceStatus.CANCELLED
+            ),
+            InvoiceStatus.CANCELLED,
+        )
+        with self.assertRaisesRegex(ValueError, "Invalid invoice status transition"):
+            invoice_service.validate_invoice_status_transition(
+                InvoiceStatus.PAID, InvoiceStatus.ISSUED
+            )
 
     def test_fastapi_create_invoice_validation_failure_returns_client_error(self):
         import tempfile
