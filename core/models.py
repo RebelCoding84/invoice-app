@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 from typing import Optional
 
 
@@ -47,6 +48,24 @@ class InvoiceOptions:
     enable_backup: bool
 
 
+class InvoiceStatus(str, Enum):
+    """Canonical lifecycle states for an invoice."""
+
+    DRAFT = "draft"
+    ISSUED = "issued"
+    PAID = "paid"
+    CREDITED = "credited"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class InvoiceLifecycleMetadata:
+    """Lifecycle state metadata shared by core invoice results."""
+
+    status: InvoiceStatus
+    changed_at: datetime
+
+
 @dataclass
 class InvoiceArtifacts:
     """Binary artifacts created by invoice processing."""
@@ -62,4 +81,5 @@ class InvoiceResult:
 
     totals: dict
     artifacts: InvoiceArtifacts
+    lifecycle: InvoiceLifecycleMetadata
     paths: dict
