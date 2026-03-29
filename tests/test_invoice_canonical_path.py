@@ -24,6 +24,8 @@ import core.invoice_service as invoice_service
 import server.main as server_main
 import server.security as server_security
 import storage.catalog as catalog
+import storage.excel as excel
+import storage.ledger as ledger
 import config as app_config
 import utils.i18n as i18n
 from core.models import Customer, InvoiceDraft, InvoiceLine, InvoiceOptions, InvoiceStatus
@@ -230,6 +232,7 @@ def _import_lite_app_with_fakes(
 ):
     fake_streamlit = types.ModuleType("streamlit")
     fake_streamlit.session_state = {}
+    captured: dict[str, object] = {"writes": []}
 
     class FakeSidebar:
         def selectbox(self, label, options, index=0, key=None):
@@ -274,13 +277,13 @@ def _import_lite_app_with_fakes(
     fake_streamlit.checkbox = lambda *args, **kwargs: False
     fake_streamlit.form_submit_button = lambda *args, **kwargs: True
     fake_streamlit.subheader = lambda *args, **kwargs: None
-    fake_streamlit.write = lambda *args, **kwargs: None
+    fake_streamlit.write = lambda *args, **kwargs: captured["writes"].append(
+        " ".join(str(arg) for arg in args)
+    )
     fake_streamlit.download_button = lambda *args, **kwargs: None
     fake_streamlit.success = lambda *args, **kwargs: None
     fake_streamlit.error = lambda *args, **kwargs: None
     fake_streamlit.exception = lambda *args, **kwargs: None
-
-    captured: dict[str, object] = {}
 
     def fake_create_invoice(draft, options):
         captured["draft"] = draft
@@ -290,6 +293,10 @@ def _import_lite_app_with_fakes(
                 pdf_bytes=b"%PDF-1.4",
                 finvoice_bytes=None,
                 invoice_no="1",
+            ),
+            lifecycle=SimpleNamespace(
+                status=InvoiceStatus.ISSUED,
+                changed_at=_business_issue_date(),
             ),
             paths={
                 "pdf_path": str(tmp_path / "receipt_000001.pdf"),
@@ -503,6 +510,91 @@ class TestInvoiceCanonicalPath(unittest.TestCase):
                 InvoiceStatus.PAID, InvoiceStatus.ISSUED
             )
 
+    def test_invoice_lifecycle_lookup_returns_latest_matching_event(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            with _invoice_runtime(tmp_path):
+                first_changed_at = _business_issue_date()
+                second_changed_at = first_changed_at + timedelta(days=45)
+
+                ledger.append_event(
+                    first_changed_at,
+                    {
+                        "event_type": "SUCCESS",
+                        "invoice_no": 1,
+                        "receipt_no": 1,
+                        "created_at": first_changed_at.isoformat(),
+                        "status": "issued",
+                        "status_changed_at": first_changed_at.isoformat(),
+                    },
+                )
+                ledger.append_event(
+                    second_changed_at,
+                    {
+                        "event_type": "SUCCESS",
+                        "invoice_no": 1,
+                        "receipt_no": 1,
+                        "created_at": second_changed_at.isoformat(),
+                        "status": "paid",
+                        "status_changed_at": second_changed_at.isoformat(),
+                    },
+                )
+
+                metadata = ledger.read_invoice_lifecycle_metadata("0001")
+                response = server_main.get_invoice_lifecycle("1")
+
+            self.assertIsNotNone(metadata)
+            assert metadata is not None
+            self.assertEqual(metadata["invoice_no"], "1")
+            self.assertEqual(metadata["status"], InvoiceStatus.PAID)
+            self.assertEqual(metadata["status_changed_at"], second_changed_at)
+            self.assertEqual(response.invoice_no, "1")
+            self.assertEqual(response.status, InvoiceStatus.PAID)
+            self.assertEqual(response.status_changed_at, second_changed_at)
+
+    def test_invoice_totals_lookup_returns_ledger_values(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            with _invoice_runtime(tmp_path):
+                result = invoice_service.create_invoice(
+                    _build_draft(),
+                    InvoiceOptions(generate_finvoice=False, enable_backup=False),
+                )
+
+                ledger_totals = excel.read_invoice_totals(
+                    tmp_path / "data" / "ledger.xlsx",
+                    result.artifacts.invoice_no,
+                )
+                response = server_main.get_invoice_totals("0001")
+
+            self.assertIsNotNone(ledger_totals)
+            assert ledger_totals is not None
+            self.assertEqual(ledger_totals["invoice_no"], "1")
+            self.assertEqual(ledger_totals["subtotal"], "20.00")
+            self.assertEqual(ledger_totals["vat"], "4.80")
+            self.assertEqual(ledger_totals["total"], "24.80")
+            self.assertEqual(ledger_totals["currency"], "EUR")
+            self.assertEqual(response.invoice_no, "1")
+            self.assertEqual(response.subtotal, "20.00")
+            self.assertEqual(response.vat, "4.80")
+            self.assertEqual(response.total, "24.80")
+            self.assertEqual(response.currency, "EUR")
+
+    def test_invoice_totals_lookup_returns_client_error_for_missing_invoice(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            with _invoice_runtime(tmp_path), self.assertRaises(HTTPException) as ctx:
+                server_main.get_invoice_totals("999")
+
+            self.assertEqual(ctx.exception.status_code, 404)
+            self.assertEqual(ctx.exception.detail, "Invoice totals not found")
+
     def test_fastapi_create_invoice_validation_failure_returns_client_error(self):
         import tempfile
 
@@ -524,6 +616,30 @@ class TestInvoiceCanonicalPath(unittest.TestCase):
                 "Company identifier is required for Finvoice generation",
             )
             self.assertEqual(render_calls, [])
+
+    def test_lite_success_branch_displays_lifecycle_status(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp_path = Path(td)
+            customers = [
+                {
+                    "name": "Acme Oy",
+                    "email": "billing@example.com",
+                    "address": "Test Street 1",
+                    "vat_id": "FI12345678",
+                }
+            ]
+            with _import_lite_app_with_fakes(
+                tmp_path,
+                customers=customers,
+                customer_choice="Acme Oy",
+            ) as (_, captured):
+                writes = captured["writes"]
+
+            self.assertTrue(
+                any("Lifecycle status: issued" in str(message) for message in writes)
+            )
 
     def test_company_metadata_validation_blocks_missing_required_fields(self):
         import tempfile

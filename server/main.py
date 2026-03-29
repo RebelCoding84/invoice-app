@@ -6,11 +6,19 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+import core.invoice_service as invoice_service
 from core.invoice_service import create_invoice
 from core.models import Customer, InvoiceDraft, InvoiceLine, InvoiceOptions
-from server.schemas import InvoiceCreateRequest, InvoiceCreateResponse
+from server.schemas import (
+    InvoiceCreateRequest,
+    InvoiceCreateResponse,
+    InvoiceLifecycleResponse,
+    InvoiceTotalsResponse,
+)
 from server.security import verify_api_key
 from server.settings import API_HOST, API_PORT
+from storage.excel import read_invoice_totals
+from storage.ledger import read_invoice_lifecycle_metadata
 
 app = FastAPI(title="Rebel Invoice API", version="0.2.x")
 app.add_middleware(
@@ -66,6 +74,30 @@ def create_invoice_endpoint(payload: InvoiceCreateRequest) -> InvoiceCreateRespo
         totals=totals,
         has_finvoice=bool(result.artifacts.finvoice_bytes),
     )
+
+
+@app.get(
+    "/api/v1/invoices/{invoice_no}/lifecycle",
+    response_model=InvoiceLifecycleResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+def get_invoice_lifecycle(invoice_no: str) -> InvoiceLifecycleResponse:
+    metadata = read_invoice_lifecycle_metadata(invoice_no)
+    if metadata is None:
+        raise HTTPException(status_code=404, detail="Invoice lifecycle not found")
+    return InvoiceLifecycleResponse(**metadata)
+
+
+@app.get(
+    "/api/v1/invoices/{invoice_no}/totals",
+    response_model=InvoiceTotalsResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+def get_invoice_totals(invoice_no: str) -> InvoiceTotalsResponse:
+    totals = read_invoice_totals(invoice_service.DATA_DIR / "ledger.xlsx", invoice_no)
+    if totals is None:
+        raise HTTPException(status_code=404, detail="Invoice totals not found")
+    return InvoiceTotalsResponse(**totals)
 
 
 @app.get(

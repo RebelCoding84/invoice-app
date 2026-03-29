@@ -28,6 +28,29 @@ export type InvoiceCreateResponse = {
   has_finvoice: boolean;
 };
 
+export type InvoiceStatus =
+  | "draft"
+  | "issued"
+  | "paid"
+  | "credited"
+  | "cancelled";
+
+export type InvoiceLifecycleResponse = {
+  invoice_no: string;
+  event_type: string;
+  status: InvoiceStatus;
+  status_changed_at: string;
+  created_at?: string | null;
+};
+
+export type InvoiceTotalsResponse = {
+  invoice_no: string;
+  subtotal: string;
+  vat: string;
+  total: string;
+  currency: string;
+};
+
 let apiBaseUrl =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 let apiKey = process.env.NEXT_PUBLIC_API_KEY || "";
@@ -63,6 +86,32 @@ export const createInvoice = async (
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(detail || "Invoice creation failed");
+  }
+  return response.json();
+};
+
+export const getInvoiceLifecycle = async (
+  invoiceNo: string
+): Promise<InvoiceLifecycleResponse> => {
+  const response = await fetch(`${apiBaseUrl}/api/v1/invoices/${invoiceNo}/lifecycle`, {
+    headers: apiKey ? { "X-API-Key": apiKey } : undefined
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Lifecycle lookup failed");
+  }
+  return response.json();
+};
+
+export const getInvoiceTotals = async (
+  invoiceNo: string
+): Promise<InvoiceTotalsResponse> => {
+  const response = await fetch(`${apiBaseUrl}/api/v1/invoices/${invoiceNo}/totals`, {
+    headers: apiKey ? { "X-API-Key": apiKey } : undefined
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Totals lookup failed");
   }
   return response.json();
 };
