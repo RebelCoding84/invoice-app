@@ -204,6 +204,7 @@ if submitted:
     try:
         result = create_invoice(draft, options)
         st.success(t("saved", lang))
+        st.write(f"Lifecycle status: {result.lifecycle.status.value}")
         pdf_name = Path(result.paths["pdf_path"]).name
         st.download_button(
             t("download_pdf", lang),

@@ -6,6 +6,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from core.models import InvoiceStatus
+
 
 class CustomerPayload(BaseModel):
     name: str
@@ -41,3 +43,19 @@ class InvoiceCreateResponse(BaseModel):
     invoice_no: str
     totals: dict
     has_finvoice: bool
+
+
+class InvoiceLifecycleResponse(BaseModel):
+    invoice_no: str
+    event_type: str
+    status: InvoiceStatus
+    status_changed_at: datetime
+    created_at: Optional[datetime] = None
+
+
+class InvoiceTotalsResponse(BaseModel):
+    invoice_no: str
+    subtotal: str
+    vat: str
+    total: str
+    currency: str
